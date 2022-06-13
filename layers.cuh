@@ -26,9 +26,9 @@ __global__
 void MaxPool2D(const float* in, float* out, int in_channels, int in_height, int in_width, int scale);
 
 __global__
-void ReLU(const float* in, float* out);
+void ReLU(const float* in, float* out, int in_channels, int in_height, int in_width);
 
 __global__
-void Sigmoid(const float* in, float* out);
+void Sigmoid(const float* in, float* out, int in_channels, int in_height, int in_width);
 
 #endif //LAYERS_CUH

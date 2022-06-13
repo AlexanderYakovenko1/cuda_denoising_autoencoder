@@ -80,7 +80,7 @@ void TranposedConv2D_3x3_2(const float* in, float* out, float* buf, const float*
 
     if (i < out_height && j < out_width) { // load spaced out input into buffer to convolve over
         for (int out_ch = 0; out_ch < out_channels; ++out_ch) {
-            if ((i & 1) == 0 && (j & 1) == 0) {  // same as i % 2 == 1 && j % 2 == 1
+            if ((i & 1) == 0 && (j & 1) == 0) {  // same as i % 2 == 0 && j % 2 == 0
                 buf[out_ch * out_height * out_width + i * out_width + j] = in[out_ch * in_width * in_height +
                                                                               (i >> 1) * in_width + (j >> 1)];
             } else {
@@ -107,7 +107,6 @@ void TranposedConv2D_3x3_2(const float* in, float* out, float* buf, const float*
                             idx = in_ch * out_channel_size + (i + k_i) * out_width + j + k_j;
                             // reversed order in comparison to regular conv
                             k_idx = out_ch * out_ch_size + in_ch * in_ch_size + (CONV_3x3_RADIUS - k_i) * CONV_3x3_DIM + CONV_3x3_RADIUS - k_j;
-//                            k_idx = out_ch * out_ch_size + in_ch * in_ch_size + (k_i + CONV_3x3_RADIUS) * CONV_3x3_DIM + k_j + CONV_3x3_RADIUS;
 
                             conv_val += buf[idx] * kernel_W[k_idx];
                         }
@@ -163,13 +162,17 @@ void MaxPool2D(const float* in, float* out, int in_channels, int in_height, int 
 }
 
 __global__
-void ReLU(const float* in, float* out) {
+void ReLU(const float* in, float* out, int in_channels, int in_height, int in_width) {
     int idx = blockIdx.x * blockDim.x + threadIdx.x;
-    out[idx] = max(in[idx], 0.f);
+    if (idx < in_channels * in_height * in_width) {
+        out[idx] = max(in[idx], 0.f);
+    }
 }
 
 __global__
-void Sigmoid(const float* in, float* out) {
+void Sigmoid(const float* in, float* out, int in_channels, int in_height, int in_width) {
     int idx = blockIdx.x * blockDim.x + threadIdx.x;
-    out[idx] = 1.f / (1.f + exp(-in[idx]));
+    if (idx < in_channels * in_height * in_width) {
+        out[idx] = 1.f / (1.f + exp(-in[idx]));
+    }
 }
