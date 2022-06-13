@@ -3,6 +3,12 @@
 
 #include <cstdio>
 
+enum {
+    ACT_NONE,
+    ACT_RELU,
+    ACT_SIGMOID
+};
+
 /// \brief Wrapper macro for CUDA error checking
 ///
 /// Usage: CHECK_CUDA_ERRS( cudaMalloc(...) );
@@ -17,16 +23,22 @@ inline void gpuAssert(cudaError_t code, const char *file, int line, bool abort=t
 }
 
 __global__
-void Conv2D_3x3(const float* in, float* out, const float* kernel_W, const float* kernel_b, int in_channels, int out_channels, int in_height, int in_width);
+void Conv2D_3x3(const float* in, float* out, const float* kernel_W, const float* kernel_b, int in_channels, int out_channels, int in_height, int in_width, int activation);
 
 __global__
-void TranposedConv2D_3x3_2(const float* in, float* out, float* buf, const float* kernel_W, const float* kernel_b, int in_channels, int out_channels, int in_height, int in_width);
+void TranposedConv2D_3x3_2(const float* in, float* out, float* buf, const float* kernel_W, const float* kernel_b, int in_channels, int out_channels, int in_height, int in_width, int activation);
 
 __global__
 void MaxPool2D(const float* in, float* out, int in_channels, int in_height, int in_width, int scale);
 
+__device__
+inline float ReLU(float value);
+
 __global__
 void ReLU(const float* in, float* out, int in_channels, int in_height, int in_width);
+
+__device__
+inline float Sigmoid(float value);
 
 __global__
 void Sigmoid(const float* in, float* out, int in_channels, int in_height, int in_width);

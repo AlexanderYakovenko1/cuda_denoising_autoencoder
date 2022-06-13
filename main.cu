@@ -11,6 +11,10 @@ constexpr int MAX_THREADS = 1024;
 std::pair<int64_t, int64_t> DenoiseMNIST(const float* in, float* out, int height, int width, const std::string& weights_dir="../model_weights") {
     std::chrono::steady_clock::time_point all_begin = std::chrono::steady_clock::now();
 
+    // ========================================================================
+    //              a lot of data loading and memory allocation
+    // ========================================================================
+
     cnpy::NpyArray conv1_weight = cnpy::npy_load(weights_dir + "/conv1.weight.npy");
     cnpy::NpyArray conv1_bias = cnpy::npy_load(weights_dir + "/conv1.bias.npy");
     cnpy::NpyArray conv2_weight = cnpy::npy_load(weights_dir + "/conv2.weight.npy");
@@ -58,6 +62,10 @@ std::pair<int64_t, int64_t> DenoiseMNIST(const float* in, float* out, int height
     CHECK_CUDA_ERRS( cudaMalloc(&cuda_conv3_bias, conv3_bias.num_vals * sizeof(float)) );
     CHECK_CUDA_ERRS( cudaMemcpy(cuda_conv3_bias, conv3_bias.data<float>(), conv3_bias.num_vals * sizeof(float), cudaMemcpyHostToDevice) );
 
+    // ========================================================================
+    //                        end of memory shenanigans
+    // ========================================================================
+
     int half_width = width >> 1;
     int half_height = height >> 1;
     int quarter_width = width >> 2;
@@ -69,23 +77,14 @@ std::pair<int64_t, int64_t> DenoiseMNIST(const float* in, float* out, int height
     float* cuda_fullres1 = nullptr;
     float* cuda_fullres32_1 = nullptr;
     float* cuda_fullres32_2 = nullptr;
-    float* cuda_halfres32_1 = nullptr;
-    float* cuda_halfres32_2 = nullptr;
-    float* cuda_quarterres32 = nullptr;
+    float* cuda_fullres32_3 = nullptr;
 
     CHECK_CUDA_ERRS( cudaMalloc(&cuda_fullres1, full_size * sizeof(float)) );
     CHECK_CUDA_ERRS( cudaMemcpy(cuda_fullres1, in, full_size * sizeof(float), cudaMemcpyHostToDevice) );
 
     CHECK_CUDA_ERRS( cudaMalloc(&cuda_fullres32_1, 32 * full_size * sizeof(float)) );
     CHECK_CUDA_ERRS( cudaMalloc(&cuda_fullres32_2, 32 * full_size * sizeof(float)) );
-    CHECK_CUDA_ERRS( cudaMalloc(&cuda_halfres32_1, 32 * half_size * sizeof(float)) );
-    CHECK_CUDA_ERRS( cudaMalloc(&cuda_halfres32_2, 32 * half_size * sizeof(float)) );
-    CHECK_CUDA_ERRS( cudaMalloc(&cuda_quarterres32, 32 * quarter_size * sizeof(float)) );
-
-//
-    // todo: remore, this is for debug only
-//    float* cpu_out = static_cast<float *>(malloc(32 * full_size * sizeof(float)));
-//
+    CHECK_CUDA_ERRS( cudaMalloc(&cuda_fullres32_3, 32 * full_size * sizeof(float)) );
 
     dim3 numBlocksFull(width / BLOCK_SIZE + 1, height / BLOCK_SIZE + 1);
     dim3 numBlocksHalf(half_width / BLOCK_SIZE + 1, half_height / BLOCK_SIZE + 1);
@@ -95,91 +94,48 @@ std::pair<int64_t, int64_t> DenoiseMNIST(const float* in, float* out, int height
     std::chrono::steady_clock::time_point begin = std::chrono::steady_clock::now();
 
     Conv2D_3x3<<<numBlocksFull, threadsPerBlock>>>(
-            cuda_fullres1, cuda_fullres32_1, cuda_conv1_weight, cuda_conv1_bias, 1, 32, height, width);
-    cudaError_t error = cudaGetLastError();
-    if(error != cudaSuccess) {
-        printf("CUDA error1: %s\n", cudaGetErrorString(error)); exit(-1);
-    }
+            cuda_fullres1, cuda_fullres32_1, cuda_conv1_weight, cuda_conv1_bias, 1, 32, height, width, ACT_RELU);
 
-//
-//    CHECK_CUDA_ERRS( cudaMemcpy(cpu_out, cuda_fullres32_1, 32 * full_size * sizeof(float), cudaMemcpyDeviceToHost) );
-//    cnpy::npy_save("../0_conv1.npy", cpu_out, {32, 256, 256});
-//
-
-    ReLU<<<32 * full_size / MAX_THREADS + 1, MAX_THREADS>>>(cuda_fullres32_1, cuda_fullres32_1, 32, height, width);
-
-    MaxPool2D<<<numBlocksHalf, threadsPerBlock>>>(cuda_fullres32_1, cuda_halfres32_1, 32, height, width, 2);
-    error = cudaGetLastError();
-    if(error != cudaSuccess) {
-        printf("CUDA error2: %s\n", cudaGetErrorString(error)); exit(-1);
-    }
-//
-//    CHECK_CUDA_ERRS( cudaMemcpy(cpu_out, cuda_halfres32_1, 32 * half_size * sizeof(float), cudaMemcpyDeviceToHost) );
-//    cnpy::npy_save("../1_maxpool1.npy", cpu_out, {32, 128, 128});
-//
+    MaxPool2D<<<numBlocksHalf, threadsPerBlock>>>(
+            cuda_fullres32_1, cuda_fullres32_2, 32, height, width, 2);
 
     Conv2D_3x3<<<numBlocksHalf, threadsPerBlock>>>(
-            cuda_halfres32_1, cuda_halfres32_2, cuda_conv2_weight, cuda_conv2_bias, 32, 32, half_height, half_width);
-//
-//    CHECK_CUDA_ERRS( cudaMemcpy(cpu_out, cuda_halfres32_2, 32 * half_size * sizeof(float), cudaMemcpyDeviceToHost) );
-//    cnpy::npy_save("../2_conv2.npy", cpu_out, {32, 128, 128});
-//
-    ReLU<<<32 * half_size / MAX_THREADS + 1, MAX_THREADS>>>(cuda_halfres32_2, cuda_halfres32_2, 32, half_height, half_width);
+            cuda_fullres32_2, cuda_fullres32_1, cuda_conv2_weight, cuda_conv2_bias, 32, 32, half_height, half_width, ACT_RELU);
 
-    MaxPool2D<<<numBlocksQuarter, threadsPerBlock>>>(cuda_halfres32_2, cuda_quarterres32, 32, half_height, half_width, 2);
-    error = cudaGetLastError();
-    if(error != cudaSuccess) {
-        printf("CUDA error3: %s\n", cudaGetErrorString(error)); exit(-1);
-    }
-//
-//    CHECK_CUDA_ERRS( cudaMemcpy(cpu_out, cuda_quarterres32, 32 * quarter_size * sizeof(float), cudaMemcpyDeviceToHost) );
-//    cnpy::npy_save("../3_maxpool2.npy", cpu_out, {32, 64, 64});
-//
+    MaxPool2D<<<numBlocksQuarter, threadsPerBlock>>>(
+            cuda_fullres32_1, cuda_fullres32_2, 32, half_height, half_width, 2);
 
     TranposedConv2D_3x3_2<<<numBlocksHalf, threadsPerBlock>>>(
-            cuda_quarterres32, cuda_halfres32_1, cuda_halfres32_2, cuda_upconv1_weight, cuda_upconv1_bias, 32, 32, quarter_height, quarter_width);
-    error = cudaGetLastError();
-    if(error != cudaSuccess) {
-        printf("CUDA error4: %s\n", cudaGetErrorString(error)); exit(-1);
-    }
-//
-//    CHECK_CUDA_ERRS( cudaMemcpy(cpu_out, cuda_halfres32_1, 32 * half_size * sizeof(float), cudaMemcpyDeviceToHost) );
-//    cnpy::npy_save("../4_upconv1.npy", cpu_out, {32, 128, 128});
-//
-    ReLU<<<32 * half_size / MAX_THREADS + 1, MAX_THREADS>>>(cuda_halfres32_1, cuda_halfres32_1, 32, half_height, half_width);
+            cuda_fullres32_2, cuda_fullres32_1, cuda_fullres32_3, cuda_upconv1_weight, cuda_upconv1_bias, 32, 32, quarter_height, quarter_width, ACT_RELU);
 
     TranposedConv2D_3x3_2<<<numBlocksFull, threadsPerBlock>>>(
-            cuda_halfres32_1, cuda_fullres32_1, cuda_fullres32_2, cuda_upconv2_weight, cuda_upconv2_bias, 32, 32, half_height, half_width);
-    error = cudaGetLastError();
-    if(error != cudaSuccess) {
-        printf("CUDA error5: %s\n", cudaGetErrorString(error)); exit(-1);
-    }
-//
-//    CHECK_CUDA_ERRS( cudaMemcpy(cpu_out, cuda_fullres32_1, 32 * full_size * sizeof(float), cudaMemcpyDeviceToHost) );
-//    cnpy::npy_save("../5_upconv2.npy", cpu_out, {32, 256, 256});
-//
-    ReLU<<<32 * full_size / MAX_THREADS + 1, MAX_THREADS>>>(cuda_fullres32_1, cuda_fullres32_1, 32, height, width);
+            cuda_fullres32_1, cuda_fullres32_2, cuda_fullres32_3, cuda_upconv2_weight, cuda_upconv2_bias, 32, 32, half_height, half_width, ACT_RELU);
 
     Conv2D_3x3<<<numBlocksFull, threadsPerBlock>>>(
-            cuda_fullres32_1, cuda_fullres1, cuda_conv3_weight, cuda_conv3_bias, 32, 1, height, width);
-    error = cudaGetLastError();
-    if(error != cudaSuccess) {
-        printf("CUDA error6: %s\n", cudaGetErrorString(error)); exit(-1);
-    }
-//
-//    CHECK_CUDA_ERRS( cudaMemcpy(cpu_out, cuda_fullres1, full_size * sizeof(float), cudaMemcpyDeviceToHost) );
-//    cnpy::npy_save("../6_conv3.npy", cpu_out, {1, 256, 256});
-//
-    Sigmoid<<<full_size / MAX_THREADS + 1, MAX_THREADS>>>(cuda_fullres1, cuda_fullres1, 1, height, width);
-//
-//    CHECK_CUDA_ERRS( cudaMemcpy(cpu_out, cuda_fullres1, full_size * sizeof(float), cudaMemcpyDeviceToHost) );
-//    cnpy::npy_save("../out.npy", cpu_out, {1, 256, 256});
-//
+            cuda_fullres32_2, cuda_fullres1, cuda_conv3_weight, cuda_conv3_bias, 32, 1, height, width, ACT_SIGMOID);
+
     cudaDeviceSynchronize();
 
     std::chrono::steady_clock::time_point end = std::chrono::steady_clock::now();
 
     CHECK_CUDA_ERRS( cudaMemcpy(out, cuda_fullres1, full_size * sizeof(float), cudaMemcpyDeviceToHost) );
+
+    CHECK_CUDA_ERRS( cudaFree(cuda_conv1_weight) );
+    CHECK_CUDA_ERRS( cudaFree(cuda_conv1_bias) );
+    CHECK_CUDA_ERRS( cudaFree(cuda_conv2_weight) );
+    CHECK_CUDA_ERRS( cudaFree(cuda_conv2_bias) );
+
+    CHECK_CUDA_ERRS( cudaFree(cuda_upconv1_weight) )
+    CHECK_CUDA_ERRS( cudaFree(cuda_upconv1_bias) );
+    CHECK_CUDA_ERRS( cudaFree(cuda_upconv2_weight) );
+    CHECK_CUDA_ERRS( cudaFree(cuda_upconv2_bias) );
+    CHECK_CUDA_ERRS( cudaFree(cuda_conv3_weight) );
+    CHECK_CUDA_ERRS( cudaFree(cuda_conv3_bias) );
+
+    CHECK_CUDA_ERRS( cudaFree(cuda_fullres1) );
+    CHECK_CUDA_ERRS( cudaFree(cuda_fullres32_1) );
+    CHECK_CUDA_ERRS( cudaFree(cuda_fullres32_2) );
+    CHECK_CUDA_ERRS( cudaFree(cuda_fullres32_3) );
 
     std::chrono::steady_clock::time_point all_end = std::chrono::steady_clock::now();
 

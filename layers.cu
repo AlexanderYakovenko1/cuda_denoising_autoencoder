@@ -34,7 +34,7 @@ constexpr int CONV_3x3_DIM = 3;
 /// does not change H, W dims
 /// zero-padding at edges
 __global__
-void Conv2D_3x3(const float* in, float* out, const float* kernel_W, const float* kernel_b, int in_channels, int out_channels, int in_height, int in_width) {
+void Conv2D_3x3(const float* in, float* out, const float* kernel_W, const float* kernel_b, int in_channels, int out_channels, int in_height, int in_width, int activation) {
     int i = blockIdx.y * blockDim.y + threadIdx.y;
     int j = blockIdx.x * blockDim.x + threadIdx.x;
 
@@ -63,7 +63,18 @@ void Conv2D_3x3(const float* in, float* out, const float* kernel_W, const float*
             }
 
             idx = out_ch * in_channel_size + i * in_width + j;
-            out[idx] = conv_val + kernel_b[out_ch];
+            switch (activation) {
+                default:
+                case ACT_NONE:
+                    out[idx] = conv_val + kernel_b[out_ch];
+                    break;
+                case ACT_RELU:
+                    out[idx] = ReLU(conv_val + kernel_b[out_ch]);
+                    break;
+                case ACT_SIGMOID:
+                    out[idx] = Sigmoid(conv_val + kernel_b[out_ch]);
+                    break;
+            }
         }
     }
 }
@@ -71,7 +82,7 @@ void Conv2D_3x3(const float* in, float* out, const float* kernel_W, const float*
 /// called for output image size
 /// i.e. numBlocks.x = out_width and NOT in_width
 __global__
-void TranposedConv2D_3x3_2(const float* in, float* out, float* buf, const float* kernel_W, const float* kernel_b, int in_channels, int out_channels, int in_height, int in_width) {
+void TranposedConv2D_3x3_2(const float* in, float* out, float* buf, const float* kernel_W, const float* kernel_b, int in_channels, int out_channels, int in_height, int in_width, int activation) {
     int i = blockIdx.y * blockDim.y + threadIdx.y;
     int j = blockIdx.x * blockDim.x + threadIdx.x;
 
@@ -116,12 +127,21 @@ void TranposedConv2D_3x3_2(const float* in, float* out, float* buf, const float*
             }
 
             idx = out_ch * out_channel_size + i * out_width + j;
-            out[idx] = conv_val + kernel_b[out_ch];
+            switch (activation) {
+                default:
+                case ACT_NONE:
+                    out[idx] = conv_val + kernel_b[out_ch];
+                    break;
+                case ACT_RELU:
+                    out[idx] = ReLU(conv_val + kernel_b[out_ch]);
+                    break;
+                case ACT_SIGMOID:
+                    out[idx] = Sigmoid(conv_val + kernel_b[out_ch]);
+                    break;
+            }
         }
     }
 }
-
-// todo: try pitched arrays
 
 /// called for output image size
 /// i.e. numBlocks.x = out_width and NOT in_width
@@ -161,18 +181,28 @@ void MaxPool2D(const float* in, float* out, int in_channels, int in_height, int 
     }
 }
 
+__device__
+inline float ReLU(float value) {
+    return max(value, 0.f);
+}
+
 __global__
 void ReLU(const float* in, float* out, int in_channels, int in_height, int in_width) {
     int idx = blockIdx.x * blockDim.x + threadIdx.x;
     if (idx < in_channels * in_height * in_width) {
-        out[idx] = max(in[idx], 0.f);
+        out[idx] = ReLU(in[idx]);
     }
+}
+
+__device__
+inline float Sigmoid(float value) {
+    return 1.f / (1.f + exp(-value));
 }
 
 __global__
 void Sigmoid(const float* in, float* out, int in_channels, int in_height, int in_width) {
     int idx = blockIdx.x * blockDim.x + threadIdx.x;
     if (idx < in_channels * in_height * in_width) {
-        out[idx] = 1.f / (1.f + exp(-in[idx]));
+        out[idx] = Sigmoid(in[idx]);
     }
 }
